@@ -536,8 +536,10 @@ def make_handler(store, web_root):
                 self._send(404, {"error": str(error)})
             except (ValueError, TypeError, KeyError) as error:
                 self._send(400, {"error": str(error)[:200]})
-            except Exception:
-                self._send(500, {"error": "request could not be completed"})
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                self._send(500, {"error": str(e)})
 
     return Handler
 
