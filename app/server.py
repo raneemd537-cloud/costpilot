@@ -546,10 +546,8 @@ def main():
     from http.server import ThreadingHTTPServer
     import sys
 
-    host = os.environ.get("DECISION_LAB_HOST", "127.0.0.1")
-    if host not in ("127.0.0.1", "localhost", "::1"):
-        raise SystemExit("This local build only binds to loopback. Harden deployment before exposing it publicly.")
-    port = int(os.environ.get("DECISION_LAB_PORT", "8765"))
+    host = os.environ.get("HOST", "0.0.0.0")
+    port = int(os.environ.get("PORT", os.environ.get("DECISION_LAB_PORT", "8765")))
     data_dir = Path(os.environ.get("DECISION_LAB_DATA", str(Path.cwd() / ".decision-lab"))).expanduser()
     store = __import__("app.store", fromlist=["Store"]).Store(data_dir / "decision-lab.sqlite3")
     server = ThreadingHTTPServer((host, port), make_handler(store, Path(__file__).resolve().parent.parent / "web"))
