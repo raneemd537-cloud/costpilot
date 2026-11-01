@@ -1,0 +1,14 @@
+.decision-lab/
+__pycache__/
+*.py[cod]
+.decision-lab/
+__pycache__/
+*.pyc
+*.py[cod]
+venv/
+myenv/
+env/
+.env
+*.db
+*.sqlite
+*.sqlite3
