@@ -134,7 +134,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(status, 303)
         self.assertIn("auth_error=google_failed", dict(callback_headers)["Location"])
         with self.store._connect() as db:
-            self.assertIsNone(db.execute("SELECT id FROM users WHERE email=?", ("unverified@example.test",)).fetchone())
+            self.assertIsNone(db.fetchone("SELECT id FROM users WHERE email=?", ("unverified@example.test",)))
 
     def test_guest_product_calculation_scenario_history_and_validation(self):
         status, product, _ = self.call("POST", "/api/products", {"name": "Tea", "currency": "ILS", "unit_cost": "5", "quantity": 4, "expenses": [], "selling_price": "10", "discount_percent": "0"})

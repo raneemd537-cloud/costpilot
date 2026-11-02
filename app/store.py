@@ -169,6 +169,8 @@ CREATE INDEX IF NOT EXISTS prt_user ON password_reset_tokens(user_id);
 # ---------------------------------------------------------------------------
 
 class Store:
+    _USE_PG = _USE_PG  # expose for server.py introspection
+
     def __init__(self, path=None):
         """
         path  – Path to the SQLite file (used only when DATABASE_URL is not set).
@@ -189,34 +191,38 @@ class Store:
     # ------------------------------------------------------------------
 
     def _init_sqlite(self):
-        with self._connect() as db:
-            for statement in _SQLITE_DDL.strip().split(";"):
-                s = statement.strip()
-                if s:
-                    db.execute(s)
+        # Use the raw connection directly during schema init (before cursor wrapper is needed)
+        with closing(sqlite3.connect(self.path, timeout=10)) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys=ON")
+            with conn:
+                for statement in _SQLITE_DDL.strip().split(";"):
+                    s = statement.strip()
+                    if s:
+                        conn.execute(s)
 
-            # Schema migrations
-            session_cols = {r["name"] for r in db.execute("PRAGMA table_info(sessions)")}
-            user_cols = {r["name"] for r in db.execute("PRAGMA table_info(users)")}
+                # Schema migrations
+                session_cols = {r["name"] for r in conn.execute("PRAGMA table_info(sessions)")}
+                user_cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
 
-            if "google_sub" not in user_cols:
-                db.execute("ALTER TABLE users ADD COLUMN google_sub TEXT")
-            db.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS users_google_sub "
-                "ON users(google_sub) WHERE google_sub IS NOT NULL"
-            )
-            if "csrf_token" not in session_cols:
-                db.execute(
-                    "ALTER TABLE sessions ADD COLUMN csrf_token TEXT NOT NULL DEFAULT ''"
+                if "google_sub" not in user_cols:
+                    conn.execute("ALTER TABLE users ADD COLUMN google_sub TEXT")
+                conn.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS users_google_sub "
+                    "ON users(google_sub) WHERE google_sub IS NOT NULL"
                 )
-            for row in db.execute(
-                "SELECT token_hash FROM sessions WHERE csrf_token=''"
-            ).fetchall():
-                csrf = secrets.token_urlsafe(24)
-                db.execute(
-                    "UPDATE sessions SET csrf_hash=?, csrf_token=? WHERE token_hash=?",
-                    (self._token_hash(csrf), csrf, row["token_hash"]),
-                )
+                if "csrf_token" not in session_cols:
+                    conn.execute(
+                        "ALTER TABLE sessions ADD COLUMN csrf_token TEXT NOT NULL DEFAULT ''"
+                    )
+                for row in conn.execute(
+                    "SELECT token_hash FROM sessions WHERE csrf_token=''"
+                ).fetchall():
+                    csrf = secrets.token_urlsafe(24)
+                    conn.execute(
+                        "UPDATE sessions SET csrf_hash=?, csrf_token=? WHERE token_hash=?",
+                        (self._token_hash(csrf), csrf, row["token_hash"]),
+                    )
 
     def _init_pg(self):
         with self._connect() as db:
@@ -248,7 +254,7 @@ class Store:
                 conn.row_factory = sqlite3.Row
                 conn.execute("PRAGMA foreign_keys=ON")
                 with conn:
-                    yield conn
+                    yield _SqliteCursor(conn)
 
     # ------------------------------------------------------------------
     # Hashing helpers
@@ -289,6 +295,11 @@ class Store:
     def create_guest_session(self):
         with self._connect() as db:
             return self._new_session(db, {"type": "guest", "id": _id()})
+
+    def _new_session_public(self, owner):
+        """Create a new session and return it. Used by server after password reset."""
+        with self._connect() as db:
+            return self._new_session(db, owner)
 
     def resolve_session(self, token):
         if not token:
@@ -794,3 +805,24 @@ class _PgCursor:
     def fetchall(self, sql, params=()):
         self._cur.execute(sql, params)
         return self._cur.fetchall()
+
+
+
+# ---------------------------------------------------------------------------
+# SQLite cursor wrapper — same interface as _PgCursor
+# ---------------------------------------------------------------------------
+
+class _SqliteCursor:
+    """Wraps sqlite3.Connection to expose the same API as _PgCursor."""
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def execute(self, sql, params=()):
+        return self._conn.execute(sql, params).rowcount
+
+    def fetchone(self, sql, params=()):
+        return self._conn.execute(sql, params).fetchone()
+
+    def fetchall(self, sql, params=()):
+        return self._conn.execute(sql, params).fetchall()

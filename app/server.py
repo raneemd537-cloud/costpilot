@@ -1,4 +1,4 @@
-"""Loopback-only HTTP API and static server for the decision lab."""
+"""ProfitPilot HTTP API and static server — production-ready."""
 
 import base64
 import hashlib
@@ -17,9 +17,20 @@ from urllib.request import Request, urlopen
 
 from .calculations import allocate_shared_expense, calculate_product, money, percent
 from . import ai
+from .ratelimit import auth_limiter, reset_request_limiter, api_limiter
 
 CURRENCIES = {"USD", "EUR", "GBP", "ILS", "JOD", "SAR", "AED", "EGP"}
 MAX_BODY = 256 * 1024
+TRUST_PROXY = os.environ.get("DECISION_LAB_TRUST_PROXY") == "1"
+
+
+def _client_ip(handler):
+    """Return the real client IP, honouring X-Forwarded-For when behind a trusted proxy."""
+    if TRUST_PROXY:
+        forwarded = handler.headers.get("X-Forwarded-For", "")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+    return handler.client_address[0]
 
 
 def _jsonable(value):
@@ -297,6 +308,10 @@ def make_handler(store, web_root):
             parsed = urlsplit(self.path)
             path = parsed.path
             try:
+                # ── Health check (no auth required) ──────────────────────────
+                if path == "/health":
+                    self._send(200, {"status": "ok", "time": int(time.time())}); return
+
                 if path == "/auth/google/start":
                     self._google_start(parsed.query); return
                 if path == "/auth/google/callback":
@@ -307,7 +322,10 @@ def make_handler(store, web_root):
                     profile = None
                     if owner["type"] == "user":
                         with store._connect() as db:
-                            row = db.execute("SELECT email FROM users WHERE id=?", (owner["id"],)).fetchone()
+                            row = db.fetchone(
+                                "SELECT email FROM users WHERE id=" + ("%s" if store._USE_PG else "?"),
+                                (owner["id"],),
+                            )
                             profile = {"email": row["email"]} if row else None
                     self._send(200, {"owner_type": owner["type"], "profile": profile,
                                      "csrf": csrf}, cookie=new_cookie)
@@ -317,6 +335,12 @@ def make_handler(store, web_root):
                 owner, _, _ = self._session()
                 if path.startswith("/api/") and not owner:
                     self._send(401, {"error": "session expired"}); return
+
+                # ── General API rate limit ────────────────────────────────────
+                ip = _client_ip(self)
+                if api_limiter.is_limited(ip):
+                    self._send(429, {"error": "too many requests, slow down"}); return
+
                 if path == "/api/products":
                     products = store.list_products(owner)
                     for product in products:
@@ -363,7 +387,12 @@ def make_handler(store, web_root):
             path = urlsplit(self.path).path
             try:
                 payload = self._body() if method != "DELETE" else {}
+                ip = _client_ip(self)
+
+                # ── Auth endpoints with rate limiting ─────────────────────────
                 if path == "/api/auth/signup" and method == "POST":
+                    if auth_limiter.is_limited(f"{ip}:signup"):
+                        self._send(429, {"error": "too many attempts, try again later"}); return
                     owner, _, token = self._session()
                     if not owner:
                         fresh = store.create_guest_session(); owner, token = fresh["owner"], fresh["token"]
@@ -372,20 +401,64 @@ def make_handler(store, web_root):
                     self._require_csrf(token)
                     user, session = store.register(str(payload.get("email", "")), str(payload.get("password", "")), token,
                                                    transfer_guest=payload.get("transfer_guest") is True)
+                    auth_limiter.reset(f"{ip}:signup")
                     self._send(201, {"profile": {"email": user["email"]}, "csrf": session["csrf"]}, cookie=session["token"]); return
+
                 if path == "/api/auth/login" and method == "POST":
+                    if auth_limiter.is_limited(f"{ip}:login"):
+                        self._send(429, {"error": "too many login attempts, try again in 10 minutes"}); return
                     _, _, token = self._session()
                     self._require_csrf(token)
                     user, session = store.login(str(payload.get("email", "")), str(payload.get("password", "")))
+                    auth_limiter.reset(f"{ip}:login")
                     self._send(200, {"profile": {"email": user["email"]}, "csrf": session["csrf"]}, cookie=session["token"]); return
+
+                # ── Password reset — request ───────────────────────────────────
+                if path == "/api/auth/request-password-reset" and method == "POST":
+                    if reset_request_limiter.is_limited(f"{ip}:reset"):
+                        self._send(429, {"error": "too many requests, try again later"}); return
+                    _, _, token = self._session()
+                    self._require_csrf(token)
+                    email = str(payload.get("email", "")).strip().lower()
+                    try:
+                        from . import email as email_module
+                        reset_token = store.create_password_reset_token(email)
+                        if email_module.configured():
+                            email_module.send_password_reset(email, reset_token)
+                        else:
+                            # Development mode: print the reset link to server console
+                            base = os.environ.get("APP_BASE_URL", "http://127.0.0.1:8765")
+                            print(f"[dev] Password reset link for {email}: {base}/reset-password?token={reset_token}")
+                    except LookupError:
+                        pass  # Do NOT reveal whether the email is registered
+                    # Always return success to prevent email enumeration
+                    self._send(200, {"message": "if that email is registered, a reset link has been sent"}); return
+
+                # ── Password reset — confirm ───────────────────────────────────
+                if path == "/api/auth/reset-password" and method == "POST":
+                    _, _, token = self._session()
+                    self._require_csrf(token)
+                    reset_token = str(payload.get("token", ""))
+                    new_password = str(payload.get("password", ""))
+                    user = store.consume_password_reset_token(reset_token, new_password)
+                    # Log user in with a fresh session after successful reset
+                    fresh_session = store._new_session_public({"type": "user", "id": user["id"]})
+                    self._send(200, {"profile": {"email": user["email"]}, "csrf": fresh_session["csrf"]},
+                               cookie=fresh_session["token"]); return
+
                 if path == "/api/session" and method == "POST" and payload.get("action") == "logout":
                     _, _, token = self._session(); self._require_csrf(token); store.logout(token)
                     fresh = store.create_guest_session()
                     self._send(200, {"owner_type": "guest", "csrf": fresh["csrf"]}, cookie=fresh["token"]); return
+
                 owner, _, token = self._session()
                 if not owner:
                     self._send(401, {"error": "session expired"}); return
                 self._require_csrf(token)
+
+                # ── General API rate limit ────────────────────────────────────
+                if api_limiter.is_limited(ip):
+                    self._send(429, {"error": "too many requests, slow down"}); return
                 if path == "/api/products" and method == "POST":
                     product = store.save_product(owner, normalize_product(payload))
                     self._send(201, {**product, "result": _jsonable(result_for(product))}); return
@@ -548,17 +621,31 @@ def main():
     from http.server import ThreadingHTTPServer
     import sys
 
-    host = os.environ.get("HOST", "0.0.0.0")
+    host = os.environ.get("DECISION_LAB_HOST", os.environ.get("HOST", "127.0.0.1"))
     port = int(os.environ.get("PORT", os.environ.get("DECISION_LAB_PORT", "8765")))
-    data_dir = Path(os.environ.get("DECISION_LAB_DATA", str(Path.cwd() / ".decision-lab"))).expanduser()
-    store = __import__("app.store", fromlist=["Store"]).Store(data_dir / "decision-lab.sqlite3")
-    server = ThreadingHTTPServer((host, port), make_handler(store, Path(__file__).resolve().parent.parent / "web"))
-    print(f"Decision Lab is running at http://{host}:{port}/")
-    print(f"SQLite data: {data_dir / 'decision-lab.sqlite3'}")
+
+    from .store import Store, _USE_PG, DATABASE_URL
+
+    if _USE_PG:
+        store = Store()  # PostgreSQL — no file path needed
+        print(f"[profitpilot] Database: PostgreSQL ({DATABASE_URL.split('@')[-1]})")
+    else:
+        data_dir = Path(os.environ.get("DECISION_LAB_DATA", str(Path.cwd() / ".decision-lab"))).expanduser()
+        store = Store(data_dir / "decision-lab.sqlite3")
+        print(f"[profitpilot] Database: SQLite ({data_dir / 'decision-lab.sqlite3'})")
+
+    server = ThreadingHTTPServer(
+        (host, port),
+        make_handler(store, Path(__file__).resolve().parent.parent / "web"),
+    )
+    print(f"[profitpilot] Listening on http://{host}:{port}/")
+    print(f"[profitpilot] Health check: http://{host}:{port}/health")
+    if TRUST_PROXY:
+        print("[profitpilot] Trusted proxy mode: ON (X-Forwarded-For honoured)")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\nStopping Decision Lab…")
+        print("\n[profitpilot] Shutting down …")
     finally:
         server.server_close()
 
