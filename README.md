@@ -1,79 +1,239 @@
-# CostPilot — Product Cost & Profit Decision Lab
+# ProfitPilot — Product Cost & Profit Decision Lab
 
-A local bilingual (Arabic/English) product-cost and pricing workspace. It uses a dependency-free Python HTTP server, SQLite, and a responsive HTML/CSS/JavaScript interface.
+ProfitPilot is a bilingual (Arabic/English) web application for product cost calculation, pricing decisions, and profit analysis.
 
-## Run it
+It helps users understand the full cost of their products, calculate profit or loss, and compare different pricing scenarios through a simple, responsive interface.
 
-Use Python 3.11 or newer:
+The application supports local development with Python and SQLite, as well as PostgreSQL and Docker-based deployment.
 
-```powershell
+---
+
+## Features
+
+### 1. Financial Calculations & Pricing
+
+- **Product Cost Calculation:** Calculate purchase costs, direct expenses, and allocated shared expenses.
+- **Profit & Loss Analysis:** Calculate total cost, revenue, net profit or loss, profit margin, and return on cost.
+- **Break-Even Analysis:** Calculate the selling price required to cover product costs.
+- **Target Profit Pricing:** Calculate the selling price needed to achieve a target profit.
+- **Discount Calculation:** Calculate the final selling price and financial results after discounts.
+- **Shared Expense Allocation:** Distribute shared expenses by quantity, purchase value, or weight.
+- **Scenario Planning:** Create and compare different pricing scenarios for products.
+- **Multi-Currency Support:** Supports USD, EUR, GBP, ILS, JOD, SAR, AED, and EGP. Different currencies are handled separately without automatic conversion.
+
+### 2. User Experience
+
+- **Arabic and English:** Bilingual interface with RTL support for Arabic and LTR support for English.
+- **Responsive Design:** Supports desktop and mobile screens.
+- **Light and Dark Themes:** Users can switch between visual themes.
+- **Guest Access:** Users can start using the application without creating an account.
+- **Registered Accounts:** Users can register and log in.
+- **Guest Data Migration:** Users can choose to transfer guest data when creating an account.
+- **Voice Input (Optional):** Supports browser-based speech recognition where available. Extracted information can be reviewed before submission.
+
+### 3. Authentication & Security
+
+- Password hashing using salted `scrypt`.
+- Secure session token handling.
+- HttpOnly and SameSite session cookies.
+- CSRF protection for modifying API requests.
+- Content Security Policy (CSP).
+- Security headers, including:
+  - `X-Content-Type-Options`
+  - `X-Frame-Options`
+  - `Referrer-Policy`
+- Rate limiting for authentication and API requests.
+- Password reset using single-use tokens with a limited validity period.
+- Optional HTTPS cookie protection using `DECISION_LAB_SECURE_COOKIE=1`.
+- Optional reverse proxy support using `DECISION_LAB_TRUST_PROXY=1`.
+
+### 4. Database & Operations
+
+- **SQLite:** Default database for local development.
+- **PostgreSQL:** Supported through the `DATABASE_URL` environment variable.
+- **Database Migration:** Includes a script for migrating SQLite data to PostgreSQL.
+- **Database Backups:** Includes an SQLite backup script with automatic retention cleanup.
+- **Health Check:** The `/health` endpoint returns application health information.
+- **Docker Support:** Includes a Dockerfile for container-based deployment.
+
+### 5. Optional Integrations
+
+The following integrations require additional configuration:
+
+- **SMTP:** For sending password reset emails.
+- **Google OAuth:** For Google sign-in, when configured.
+- **OpenAI API:** For optional AI-powered financial reviews.
+
+The application can run locally without configuring these external services.
+
+---
+
+## Installation & Local Setup
+
+### Requirements
+
+- Python 3.11 or newer.
+- Git.
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/raneemd537-cloud/costpilot.git
+cd costpilot
+```
+
+### 2. Install dependencies
+
+Install the project's Python dependencies:
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+SQLite is included with Python and does not require a separate database installation.
+
+### 3. Run the application
+
+```bash
 python -m app.server
 ```
 
-Then open [http://127.0.0.1:8765](http://127.0.0.1:8765). On this machine, if `python` is not on PATH, run:
+Open the following address in your browser:
 
-```powershell
-& 'C:\Users\khatib\anaconda3\python.exe' -m app.server
+http://127.0.0.1:8765
+
+---
+
+## Running Tests
+
+Install pytest if it is not already available:
+
+```bash
+python -m pip install pytest
 ```
 
-The app binds to loopback only. SQLite data is stored in `.decision-lab/decision-lab.sqlite3` under the current directory. Set `DECISION_LAB_DATA` to use another data folder, or `DECISION_LAB_PORT` to choose another port. Do not expose this local server to the public internet.
+Run the automated test suite:
 
-## Google account sign-in
-
-Google sign-in uses the server-side authorization-code flow with PKCE, a one-time state cookie, and Google's verified userinfo response. Create a Google OAuth client of type Web application and register the exact redirect URI below. These variables must be set in the server environment; the Google client secret is never sent to the browser.
-
-```powershell
-$env:GOOGLE_CLIENT_ID = "your-client-id.apps.googleusercontent.com"
-$env:GOOGLE_CLIENT_SECRET = "your-client-secret"
-$env:GOOGLE_REDIRECT_URI = "http://localhost:8765/auth/google/callback"
-python -m app.server
+```bash
+python -m pytest tests/ -v
 ```
 
-For an HTTPS deployment, register its exact HTTPS callback and set `DECISION_LAB_SECURE_COOKIE=1`. The current server is designed for local loopback use and should not be exposed publicly without a production deployment review.
+The test suite covers financial calculations, database operations, API behavior, authentication, and production-related functionality.
 
-## Financial rules
+---
 
-- Whole-quantity profit/loss = discounted unit selling price × quantity − total cost.
-- Margin = profit ÷ revenue. Return on cost = profit ÷ total cost. A zero denominator displays as unavailable.
-- Break-even unit price = total cost ÷ quantity.
-- Break-even is shown as the original unit price before discount. The entered discount is included; at a 100% discount no finite break-even price exists.
-- A fixed-profit target price accounts for discount and the full target amount.
-- A percentage target explicitly selects margin on revenue or markup on cost.
-- Shared expenses split by quantity, purchase value, or weight. The largest-remainder cent allocation reconciles to the original amount. Mixed currencies cannot share an expense.
-- Customer-paid delivery is excluded. Supplier shipping has no special rule; it may only be entered as an explicitly allocated general expense.
-- Initial currencies: USD, EUR, GBP, ILS, JOD, SAR, AED, EGP. No conversion is performed.
+## Environment Configuration
 
-## Stack and security choices
+The project includes an `.env.example` file as a configuration reference.
 
-- Python standard-library HTTP and SQLite avoid package installs and keep the local app self-contained.
-- Passwords use salted `scrypt` (N=2^17, r=8, p=1). Session cookies are HttpOnly and SameSite=Lax; only a SHA-256 verifier of the random session cookie is persisted. Mutating API calls require a per-session CSRF token. SQL uses placeholders, and all product, scenario, shared-cost, and history operations are owner-scoped.
-- Request bodies are limited to 256 KiB. The server sets a restrictive same-origin Content Security Policy and security headers.
-- The local server has no production TLS, rate limiting, automated backups, password recovery, or hosting hardening. Use loopback only; review and implement those controls before deployment.
-- Guest data stays in the local SQLite database. Account creation explicitly offers transfer or a separate empty account.
-- Cairo and DM Sans are requested from Google Fonts, with local system fallbacks if the service is unavailable.
+Set environment variables in your deployment environment as needed.
 
-## Speech and AI
+| Variable | Description |
+|---|---|
+| `DECISION_LAB_HOST` | Server bind address. Use `0.0.0.0` when required by a container or hosting platform. |
+| `DECISION_LAB_PORT` | Server listening port. |
+| `DECISION_LAB_DATA` | Directory used for local application data. |
+| `DATABASE_URL` | PostgreSQL connection URL. If configured, the application uses PostgreSQL instead of SQLite. |
+| `DECISION_LAB_TRUST_PROXY` | Set to `1` when using a trusted reverse proxy. |
+| `DECISION_LAB_SECURE_COOKIE` | Set to `1` when serving the application over HTTPS. |
+| `APP_BASE_URL` | Public application URL, used when generating password reset links. |
+| `SMTP_HOST` | SMTP server hostname for email delivery. |
+| `SMTP_PORT` | SMTP server port. |
+| `SMTP_USER` | SMTP account username. |
+| `SMTP_PASSWORD` | SMTP account password or application credential. |
+| `SMTP_FROM` | Sender address for outgoing emails. |
+| `GOOGLE_CLIENT_ID` | Optional Google OAuth client ID. |
+| `GOOGLE_CLIENT_SECRET` | Optional Google OAuth client secret. |
+| `GOOGLE_REDIRECT_URI` | Optional Google OAuth callback URL. |
+| `OPENAI_API_KEY` | Optional OpenAI API key for AI features. |
+| `DECISION_LAB_AI_MODEL` | Optional AI model configuration. |
 
-- Voice input uses the browser Web Speech Recognition API when available, currently with Arabic or English selected from the app language. Speech results only populate reviewable fields. Nothing is saved or calculated until the user confirms the form. Browser support and mixed-language recognition quality vary; code-switching is not guaranteed. Some browsers send audio to their speech service. Recordings are not retained by this app.
-- “Suggest profit improvements” is a user-triggered, local arithmetic comparison with stated assumptions; it does not predict demand and never edits prices. An optional AI financial review uses OpenAI's Responses API only after a per-request confirmation. It sends the product's currency, costs, quantity, expenses, price, discount, and deterministic results; it omits product name/category and account identity. AI commentary cannot change calculations. The response request uses `store: false`, but this is not a promise of zero retention; data handling also depends on the OpenAI project and organization settings. Review the provider's current data controls before enabling.
-- AI review is off unless `OPENAI_API_KEY` is configured in the server environment. The key remains server-side. Optional `DECISION_LAB_AI_MODEL` defaults to `gpt-5.4-mini`. In PowerShell, set these in the same terminal before launching the server:
+**Important:** Never commit passwords, API keys, database credentials, or other secrets to GitHub.
 
-```powershell
-$env:OPENAI_API_KEY = "your-project-key"
-$env:DECISION_LAB_AI_MODEL = "gpt-5.4-mini"
-python -m app.server
+External integrations such as SMTP, Google OAuth, and OpenAI require valid configuration before they can be used.
+
+---
+
+## Database Management
+
+### SQLite Backups
+
+Run the backup script:
+
+```bash
+python scripts/backup.py
 ```
 
-The UI displays the consent prompt on each review. No real provider call is made by automated tests. API usage can incur charges.
+The script creates an SQLite database backup and removes old backups according to its retention settings.
 
-## Skills and verification
+### SQLite to PostgreSQL Migration
 
-Used Superpowers workflows: using-superpowers, brainstorming (the detailed PRD authorized proceeding without a clarification round), writing-plans, test-driven-development, executing-plans, and verification-before-completion. No dedicated UI, database, or security skill was available in the provided Skills list. OWASP password-storage and session-management guidance informed the auth/session controls.
+To migrate an existing SQLite database to PostgreSQL:
 
-Run the automated suite:
+1. Configure the `DATABASE_URL` environment variable with your PostgreSQL connection URL.
+2. Run:
 
-```powershell
-& 'C:\Users\khatib\anaconda3\python.exe' -m unittest discover -v
+```bash
+python scripts/migrate_sqlite_to_pg.py
 ```
 
-The suite covers calculation formulas and edge cases, cent-reconciled expense allocation, SQLite persistence, guest transfer, owner separation, CSRF, product calculations, scenarios, activity history, mixed-currency rejection, and mocked AI request behavior without an external call.
+Review the migration output and verify the migrated data before using the PostgreSQL database.
+
+---
+
+## Docker Deployment
+
+Build the Docker image:
+
+```bash
+docker build -t profitpilot .
+```
+
+Run the container:
+
+```bash
+docker run -d -p 8765:8765 --name profitpilot profitpilot
+```
+
+For persistent data, configure a suitable volume and database location according to the container configuration.
+
+Check the health endpoint:
+
+```bash
+curl http://127.0.0.1:8765/health
+```
+
+---
+
+## Project Structure
+
+```text
+costpilot/
+├── app/
+│   ├── server.py
+│   ├── store.py
+│   ├── calculations.py
+│   ├── ai.py
+│   ├── email.py
+│   └── ratelimit.py
+├── scripts/
+│   ├── backup.py
+│   └── migrate_sqlite_to_pg.py
+├── tests/
+├── web/
+│   ├── index.html
+│   ├── app.js
+│   └── styles.css
+├── Dockerfile
+├── requirements.txt
+├── .env.example
+└── README.md
+```
+
+---
+
+## Project Status
+
+ProfitPilot includes financial calculation tools, product scenario planning, bilingual user interface support, authentication, database support, and deployment-related features.
+
+The application can be run locally for development and testing. Deployment requires configuring the appropriate database, environment variables, and external services for the selected hosting platform.
