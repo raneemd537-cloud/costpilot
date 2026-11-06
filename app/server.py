@@ -291,7 +291,7 @@ def make_handler(store, web_root):
                 if profile.get("email_verified") not in (True, "true"):
                     raise ValueError("Google email is not verified")
                 _, session = store.login_with_google(profile.get("email", ""), profile.get("sub", ""),
-                    attempt["guest_token"], attempt["transfer_guest"])
+                    attempt["guest_token"], attempt["transfer_guest"], profile.get("name"))
                 self._redirect("/?auth_success=google", session_cookie=session["token"], oauth_state_cookie="")
             except Exception:
                 self._redirect("/?auth_error=google_failed", oauth_state_cookie="")
@@ -323,10 +323,10 @@ def make_handler(store, web_root):
                     if owner["type"] == "user":
                         with store._connect() as db:
                             row = db.fetchone(
-                                "SELECT email FROM users WHERE id=" + ("%s" if store._USE_PG else "?"),
+                                "SELECT email, display_name FROM users WHERE id=" + ("%s" if store._USE_PG else "?"),
                                 (owner["id"],),
                             )
-                            profile = {"email": row["email"]} if row else None
+                            profile = {"email": row["email"], "display_name": row["display_name"]} if row else None
                     self._send(200, {"owner_type": owner["type"], "profile": profile,
                                      "csrf": csrf}, cookie=new_cookie)
                     return
@@ -402,7 +402,7 @@ def make_handler(store, web_root):
                     user, session = store.register(str(payload.get("email", "")), str(payload.get("password", "")), token,
                                                    transfer_guest=payload.get("transfer_guest") is True)
                     auth_limiter.reset(f"{ip}:signup")
-                    self._send(201, {"profile": {"email": user["email"]}, "csrf": session["csrf"]}, cookie=session["token"]); return
+                    self._send(201, {"profile": {"email": user["email"], "display_name": user.get("display_name")}, "csrf": session["csrf"]}, cookie=session["token"]); return
 
                 if path == "/api/auth/login" and method == "POST":
                     if auth_limiter.is_limited(f"{ip}:login"):
