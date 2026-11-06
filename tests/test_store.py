@@ -78,7 +78,7 @@ class StoreTests(unittest.TestCase):
 
         upgraded = Store(legacy_path)
         with upgraded._connect() as conn:
-            columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
+            columns = {row["name"] for row in conn.fetchall("PRAGMA table_info(users)")}
             row = conn.fetchone("SELECT id, email, display_name FROM users WHERE id=?", ("legacy-user",))
         self.assertIn("display_name", columns)
         self.assertEqual(row["email"], "legacy@example.test")
