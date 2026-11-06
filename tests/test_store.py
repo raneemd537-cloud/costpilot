@@ -44,6 +44,10 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(user["id"], again["id"])
         self.assertEqual(user["display_name"], "Seller Name")
         self.assertEqual(again["display_name"], "Seller Name")
+        renamed, _ = self.store.login_with_google(
+            "seller@example.test", "google-sub-1", display_name="Updated Seller"
+        )
+        self.assertEqual(renamed["display_name"], "Updated Seller")
         self.assertEqual(session["owner"], next_session["owner"])
         self.assertEqual(len(self.store.list_products({"type": "user", "id": user["id"]})), 1)
 
