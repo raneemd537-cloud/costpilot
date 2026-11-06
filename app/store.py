@@ -73,7 +73,7 @@ PRAGMA journal_mode=WAL;
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE,
     salt BLOB NOT NULL, password_hash BLOB NOT NULL, created_at INTEGER NOT NULL,
-    google_sub TEXT UNIQUE
+    google_sub TEXT UNIQUE, display_name TEXT
 );
 CREATE TABLE IF NOT EXISTS sessions (
     token_hash TEXT PRIMARY KEY, owner_type TEXT NOT NULL,
@@ -121,7 +121,7 @@ CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE,
     salt BYTEA NOT NULL, password_hash BYTEA NOT NULL,
     created_at BIGINT NOT NULL,
-    google_sub TEXT UNIQUE
+    google_sub TEXT UNIQUE, display_name TEXT
 );
 CREATE TABLE IF NOT EXISTS sessions (
     token_hash TEXT PRIMARY KEY, owner_type TEXT NOT NULL,
@@ -207,6 +207,8 @@ class Store:
 
                 if "google_sub" not in user_cols:
                     conn.execute("ALTER TABLE users ADD COLUMN google_sub TEXT")
+                if "display_name" not in user_cols:
+                    conn.execute("ALTER TABLE users ADD COLUMN display_name TEXT")
                 conn.execute(
                     "CREATE UNIQUE INDEX IF NOT EXISTS users_google_sub "
                     "ON users(google_sub) WHERE google_sub IS NOT NULL"
@@ -230,6 +232,7 @@ class Store:
                 s = statement.strip()
                 if s:
                     db.execute(s)
+            db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name TEXT")
 
     # ------------------------------------------------------------------
     # Connection context managers
@@ -393,9 +396,10 @@ class Store:
             return user, self._new_session(db, {"type": "user", "id": user["id"]})
 
     def login_with_google(self, email, google_sub, guest_token=None,
-                          transfer_guest=False):
+                          transfer_guest=False, display_name=None):
         email = email.strip().lower()
         google_sub = str(google_sub).strip()
+        display_name = str(display_name or "").strip()[:120] or None
         if len(email) > 254 or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
             raise ValueError("Google account did not provide a valid email")
         if not google_sub or len(google_sub) > 255:
@@ -439,7 +443,12 @@ class Store:
                     row = db.fetchone(
                         f"SELECT * FROM users WHERE id={p}", (user_id,)
                     )
-            user = {"id": row["id"], "email": email}
+            if display_name:
+                db.execute(
+                    f"UPDATE users SET display_name={p} WHERE id={p}",
+                    (display_name, row["id"]),
+                )
+            user = {"id": row["id"], "email": email, "display_name": display_name or row["display_name"]}
             if guest_token:
                 old_hash = self._token_hash(guest_token)
                 guest = db.fetchone(

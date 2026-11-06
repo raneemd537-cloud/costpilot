@@ -39,9 +39,15 @@ class StoreTests(unittest.TestCase):
 
     def test_google_identity_is_idempotent_and_transfers_guest_workspace(self):
         self.store.save_product(self.guest["owner"], {"name": "Google product", "currency": "USD"})
-        user, session = self.store.login_with_google("seller@example.test", "google-sub-1", self.guest["token"], True)
+        user, session = self.store.login_with_google("seller@example.test", "google-sub-1", self.guest["token"], True, "Seller Name")
         again, next_session = self.store.login_with_google("seller@example.test", "google-sub-1")
         self.assertEqual(user["id"], again["id"])
+        self.assertEqual(user["display_name"], "Seller Name")
+        self.assertEqual(again["display_name"], "Seller Name")
+        renamed, _ = self.store.login_with_google(
+            "seller@example.test", "google-sub-1", display_name="Updated Seller"
+        )
+        self.assertEqual(renamed["display_name"], "Updated Seller")
         self.assertEqual(session["owner"], next_session["owner"])
         self.assertEqual(len(self.store.list_products({"type": "user", "id": user["id"]})), 1)
 
@@ -49,6 +55,36 @@ class StoreTests(unittest.TestCase):
         self.store.login_with_google("seller@example.test", "google-sub-1")
         with self.assertRaisesRegex(ValueError, "Google account"):
             self.store.login_with_google("seller@example.test", "google-sub-2")
+
+    def test_legacy_users_table_migrates_display_name_without_losing_account(self):
+        legacy_path = Path(self.tmp.name) / "legacy-users.db"
+        db = sqlite3.connect(legacy_path)
+        db.execute(
+            "CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, "
+            "salt BLOB NOT NULL, password_hash BLOB NOT NULL, created_at INTEGER NOT NULL, "
+            "google_sub TEXT UNIQUE)"
+        )
+        salt = b"0123456789abcdef"
+        password_hash = hashlib.scrypt(
+            b"a-long-safe-password", salt=salt, n=2 ** 17, r=8, p=1,
+            maxmem=256 * 1024 * 1024, dklen=32,
+        )
+        db.execute(
+            "INSERT INTO users VALUES (?, ?, ?, ?, ?, ?)",
+            ("legacy-user", "legacy@example.test", salt, password_hash, int(time.time()), None),
+        )
+        db.commit()
+        db.close()
+
+        upgraded = Store(legacy_path)
+        with upgraded._connect() as conn:
+            columns = {row["name"] for row in conn.fetchall("PRAGMA table_info(users)")}
+            row = conn.fetchone("SELECT id, email, display_name FROM users WHERE id=?", ("legacy-user",))
+        self.assertIn("display_name", columns)
+        self.assertEqual(row["email"], "legacy@example.test")
+        self.assertIsNone(row["display_name"])
+        user, _ = upgraded.login("legacy@example.test", "a-long-safe-password")
+        self.assertEqual(user["id"], "legacy-user")
 
     def test_product_removal_cascades_scenarios_but_not_calculation_history(self):
         owner = self.guest["owner"]

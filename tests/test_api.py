@@ -106,7 +106,7 @@ class ApiTests(unittest.TestCase):
             state_cookie = next(value.split(";", 1)[0] for name, value in start_headers if name.lower() == "set-cookie")
             state = state_cookie.split("=", 1)[1]
             with patch("app.server.urlopen", side_effect=[Response({"access_token": "access"}),
-                    Response({"sub": "google-user-verified", "email": "verified@example.test", "email_verified": True})]):
+                    Response({"sub": "google-user-verified", "email": "verified@example.test", "email_verified": True, "name": "Verified Seller"})]):
                 status, _, callback_headers = self.raw_get(f"/auth/google/callback?state={state}&code=auth-code",
                     cookie=f"{self.cookie}; {state_cookie}")
         self.assertEqual(status, 303)
@@ -114,6 +114,7 @@ class ApiTests(unittest.TestCase):
         session_cookie = next(value.split(";", 1)[0] for name, value in callback_headers if name.lower() == "set-cookie" and value.startswith("decision_session="))
         _, session, _ = self.call("GET", "/api/session", cookie=session_cookie)
         self.assertEqual(session["profile"]["email"], "verified@example.test")
+        self.assertEqual(session["profile"]["display_name"], "Verified Seller")
 
     def test_google_oauth_rejects_unverified_email(self):
         class Response:
