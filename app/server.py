@@ -367,9 +367,9 @@ def make_handler(store, web_root):
                     self._send(404, {"error": "not found"}); return
                 asset = "index.html" if path == "/" else path.lstrip("/")
                 candidate = (web_root / asset).resolve()
-                if candidate.parent != web_root or not candidate.is_file() or candidate.name not in ("index.html", "app.js", "styles.css"):
+                if candidate.parent != web_root or not candidate.is_file() or candidate.name not in ("index.html", "app.js", "styles.css", "favicon.png"):
                     self._send(404, b"Not found", content_type="text/plain; charset=utf-8"); return
-                types = {"index.html": "text/html; charset=utf-8", "app.js": "text/javascript; charset=utf-8", "styles.css": "text/css; charset=utf-8"}
+                types = {"index.html": "text/html; charset=utf-8", "app.js": "text/javascript; charset=utf-8", "styles.css": "text/css; charset=utf-8", "favicon.png": "image/png"}
                 self._send(200, candidate.read_bytes(), content_type=types[candidate.name])
             except Exception:
                 self._send(500, {"error": "request could not be completed"})
